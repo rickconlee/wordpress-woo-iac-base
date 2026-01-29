@@ -192,3 +192,16 @@ resource "aws_autoscaling_attachment" "asg" {
   autoscaling_group_name = aws_autoscaling_group.wp.name
   lb_target_group_arn    = aws_lb_target_group.tg.arn
 }
+
+##########################
+# Cloudflare DNS Record
+###########################
+
+resource "cloudflare_record" "wp" {
+  zone_id = var.cloudflare_zone_id
+  name    = "@"
+  type    = "CNAME"
+  value   = aws_lb.nlb.dns_name
+  ttl     = 60
+  proxied = true
+}
