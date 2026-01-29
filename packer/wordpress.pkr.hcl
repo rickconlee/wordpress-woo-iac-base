@@ -12,22 +12,30 @@ packer {
 }
 
 ############################
-# Variables
+# Variables (match terraform.tfvars)
 ############################
 
-variable "region" {
-  type    = string
-  default = "us-east-2"
+variable "aws_access_key_id" {
+  type      = string
+  sensitive = true
 }
 
-variable "source_ami" {
-  type    = string
-  default = "ami-0a695f0d95cefc163" # Amazon Linux 2 (update if needed)
+variable "aws_secret_access_key" {
+  type      = string
+  sensitive = true
 }
 
-variable "instance_type" {
-  type    = string
-  default = "t2.micro"
+variable "aws_region" {
+  type = string
+}
+
+variable "environment" {
+  type = string
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true
 }
 
 ############################
@@ -35,22 +43,37 @@ variable "instance_type" {
 ############################
 
 source "amazon-ebs" "wordpress" {
-  region        = var.region
-  source_ami    = var.source_ami
-  instance_type = var.instance_type
+  region        = var.aws_region
+  instance_type = "t2.micro"
   ssh_username  = "ec2-user"
 
-  ami_name      = "lolzify-wordpress-{{timestamp}}"
-
-  subnet_filter {
+  source_ami_filter {
     filters = {
-      "tag:Name" = "*"
+      name                = "amzn2-ami-hvm-*-x86_64-gp2"
+      virtualization-type = "hvm"
+      root-device-type    = "ebs"
     }
-    most_free = true
+    owners      = ["amazon"]
+    most_recent = true
   }
 
+  ami_name = "lolzify-${var.environment}-wordpress-{{timestamp}}"
+
+  ############################
+  # THIS IS THE CRITICAL PART
+  # tfvars → env vars → AWS SDK
+  ############################
+
+  environment_vars = [
+    "AWS_ACCESS_KEY_ID=${var.aws_access_key_id}",
+    "AWS_SECRET_ACCESS_KEY=${var.aws_secret_access_key}",
+    "AWS_DEFAULT_REGION=${var.aws_region}"
+  ]
+
   tags = {
-    Name = "packer-lolzify-wordpress"
+    Name        = "lolzify-wordpress"
+    Environment = var.environment
+    BuiltBy     = "packer"
   }
 }
 
@@ -65,5 +88,10 @@ build {
   provisioner "ansible" {
     playbook_file = "../ansible/playbook.yml"
     user          = "ec2-user"
+
+    extra_arguments = [
+      "--extra-vars",
+      "db_password=${var.db_password} environment=${var.environment}"
+    ]
   }
 }

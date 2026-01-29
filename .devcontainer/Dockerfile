@@ -2,9 +2,9 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-#####################################
-# Locale setup
-#####################################
+############################
+# Locale setup (required for Ansible)
+############################
 
 RUN apt-get update && apt-get install -y \
     locales \
@@ -27,10 +27,8 @@ ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 
 ############################
-# Terraform
+# HashiCorp tools repo
 ############################
-
-ARG TERRAFORM_VERSION=1.6.6
 
 RUN curl -fsSL https://apt.releases.hashicorp.com/gpg \
     | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
@@ -40,8 +38,15 @@ RUN echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] \
     $(lsb_release -cs) main" \
     > /etc/apt/sources.list.d/hashicorp.list
 
-RUN apt-get update && apt-get install -y terraform \
-    && terraform version
+############################
+# Terraform + Packer
+############################
+
+RUN apt-get update && apt-get install -y \
+    terraform \
+    packer \
+    && terraform version \
+    && packer version
 
 ############################
 # Ansible
