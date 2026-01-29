@@ -2,9 +2,9 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-############################
-# Locale setup (FIXES ANSIBLE ERROR)
-############################
+#####################################
+# Locale setup
+#####################################
 
 RUN apt-get update && apt-get install -y \
     locales \
