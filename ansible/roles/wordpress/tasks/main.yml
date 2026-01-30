@@ -1,0 +1,55 @@
+- name: Install packages
+  dnf:
+    name:
+      - nginx
+      - php
+      - php-mysqlnd
+      - amazon-efs-utils
+    state: present
+
+- name: Ensure /etc/ssl/private exists
+  file:
+    path: /etc/ssl/private
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create web root
+  file:
+    path: /var/www/html
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: "0755"
+
+- name: Create wp-content mount point
+  file:
+    path: /var/www/html/wp-content
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: "0755"
+
+- name: Copy Cloudflare cert
+  copy:
+    src: cloudflare-origin.crt
+    dest: /etc/ssl/certs/origin.crt
+    mode: "0644"
+
+- name: Copy Cloudflare key
+  copy:
+    src: cloudflare-origin.key
+    dest: /etc/ssl/private/origin.key
+    mode: "0600"
+
+- name: Nginx config
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+
+- name: Enable nginx
+  service:
+    name: nginx
+    enabled: true
+    state: started
