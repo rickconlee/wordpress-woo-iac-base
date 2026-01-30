@@ -1,5 +1,5 @@
 - name: Install packages
-  yum:
+  dnf:
     name:
       - nginx
       - php
@@ -7,18 +7,29 @@
       - amazon-efs-utils
     state: present
 
+- name: Ensure /etc/ssl/private exists
+  file:
+    path: /etc/ssl/private
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Create web root
   file:
     path: /var/www/html
     state: directory
+    owner: nginx
+    group: nginx
+    mode: "0755"
 
-- name: Mount EFS for wp-content
-  mount:
+- name: Create wp-content mount point
+  file:
     path: /var/www/html/wp-content
-    src: "{{ efs_dns }}:/"
-    fstype: efs
-    opts: _netdev
-    state: mounted
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: "0755"
 
 - name: Copy Cloudflare cert
   copy:
