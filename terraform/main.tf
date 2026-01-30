@@ -45,25 +45,9 @@ resource "aws_route_table_association" "b" {
 # Security Groups
 ##################
 
-resource "aws_security_group" "efs" {
-  vpc_id = aws_vpc.demo.id
-
-  ingress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.web.id]
-  }
-
-  egress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.web.id]
-  }
-}
-
+# Web (EC2)
 resource "aws_security_group" "web" {
+  name   = "web"
   vpc_id = aws_vpc.demo.id
 
   ingress {
@@ -73,19 +57,49 @@ resource "aws_security_group" "web" {
     cidr_blocks = local.cloudflare_ipv4
   }
 
-  ingress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.efs.id]
+  egress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
-    from_port       = 2049
-    to_port         = 2049
-    protocol        = "tcp"
-    security_groups = [aws_security_group.efs.id]
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+# EFS
+resource "aws_security_group" "efs" {
+  name   = "efs"
+  vpc_id = aws_vpc.demo.id
+}
+
+resource "aws_security_group_rule" "efs_from_web" {
+  type                     = "ingress"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id         = aws_security_group.efs.id
+  source_security_group_id  = aws_security_group.web.id
+}
+
+# RDS
+resource "aws_security_group" "db" {
+  name   = "db"
+  vpc_id = aws_vpc.demo.id
+}
+
+resource "aws_security_group_rule" "db_from_web" {
+  type                     = "ingress"
+  from_port                = 3306
+  to_port                  = 3306
+  protocol                 = "tcp"
+  security_group_id         = aws_security_group.db.id
+  source_security_group_id  = aws_security_group.web.id
 }
 
 ##################
@@ -113,7 +127,10 @@ resource "aws_efs_mount_target" "b" {
 ##################
 
 resource "aws_db_subnet_group" "db" {
-  subnet_ids = [aws_subnet.a.id, aws_subnet.b.id]
+  subnet_ids = [
+    aws_subnet.a.id,
+    aws_subnet.b.id
+  ]
 }
 
 resource "aws_db_instance" "mysql" {
@@ -125,23 +142,26 @@ resource "aws_db_instance" "mysql" {
   password               = "changeme123!"
   skip_final_snapshot    = true
   db_subnet_group_name   = aws_db_subnet_group.db.name
-  vpc_security_group_ids = [aws_security_group.web.id]
+  vpc_security_group_ids = [aws_security_group.db.id]
 }
 
 ##################
-# NLB
+# Network Load Balancer
 ##################
 
 resource "aws_lb" "nlb" {
   name               = "lolzify-nlb"
   load_balancer_type = "network"
-  subnets            = [aws_subnet.a.id, aws_subnet.b.id]
+  subnets            = [
+    aws_subnet.a.id,
+    aws_subnet.b.id
+  ]
 }
 
 resource "aws_lb_target_group" "tg" {
   port     = 443
   protocol = "TCP"
-  vpc_id  = aws_vpc.demo.id
+  vpc_id   = aws_vpc.demo.id
 
   health_check {
     protocol = "TCP"
@@ -164,7 +184,7 @@ resource "aws_lb_listener" "listener" {
 ##################
 
 resource "aws_launch_template" "wp" {
-  image_id      = "ami-ANSIBLE-BUILT"
+  image_id      = "ami-05bf1d46393e681cc"
   instance_type = "t2.micro"
 
   network_interfaces {
@@ -177,6 +197,7 @@ resource "aws_autoscaling_group" "wp" {
   desired_capacity = 2
   min_size         = 2
   max_size         = 2
+
   vpc_zone_identifier = [
     aws_subnet.a.id,
     aws_subnet.b.id
@@ -194,14 +215,14 @@ resource "aws_autoscaling_attachment" "asg" {
 }
 
 ##########################
-# Cloudflare DNS Record
-###########################
+# Cloudflare DNS
+##########################
 
 resource "cloudflare_record" "wp" {
   zone_id = var.cloudflare_zone_id
   name    = "@"
   type    = "CNAME"
   value   = aws_lb.nlb.dns_name
-  ttl     = 60
+  ttl     = 1
   proxied = true
 }

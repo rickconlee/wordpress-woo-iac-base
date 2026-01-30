@@ -1,8 +1,6 @@
 terraform {
   required_version = ">= 1.6.0"
 
-# Included providers
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -15,8 +13,18 @@ terraform {
   }
 }
 
-# Provider specific configuration items
+############################
+# AWS Provider
+############################
 
 provider "aws" {
   region = "us-east-2"
+}
+
+############################
+# Cloudflare Provider
+############################
+
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
 }

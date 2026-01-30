@@ -12,30 +12,17 @@ packer {
 }
 
 ############################
-# Variables (match terraform.tfvars)
+# Variables (build metadata only)
 ############################
 
-variable "aws_access_key_id" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_access_key" {
-  type      = string
-  sensitive = true
-}
-
 variable "aws_region" {
-  type = string
+  type    = string
+  default = "us-east-2"
 }
 
 variable "environment" {
-  type = string
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
+  type    = string
+  default = "demo"
 }
 
 ############################
@@ -49,7 +36,7 @@ source "amazon-ebs" "wordpress" {
 
   source_ami_filter {
     filters = {
-      name                = "amzn2-ami-hvm-*-x86_64-gp2"
+      name                = "al2023-ami-*-x86_64"
       virtualization-type = "hvm"
       root-device-type    = "ebs"
     }
@@ -59,21 +46,11 @@ source "amazon-ebs" "wordpress" {
 
   ami_name = "lolzify-${var.environment}-wordpress-{{timestamp}}"
 
-  ############################
-  # THIS IS THE CRITICAL PART
-  # tfvars → env vars → AWS SDK
-  ############################
-
-  environment_vars = [
-    "AWS_ACCESS_KEY_ID=${var.aws_access_key_id}",
-    "AWS_SECRET_ACCESS_KEY=${var.aws_secret_access_key}",
-    "AWS_DEFAULT_REGION=${var.aws_region}"
-  ]
-
   tags = {
     Name        = "lolzify-wordpress"
     Environment = var.environment
     BuiltBy     = "packer"
+    Purpose     = "wordpress-runtime"
   }
 }
 
@@ -88,10 +65,5 @@ build {
   provisioner "ansible" {
     playbook_file = "../ansible/playbook.yml"
     user          = "ec2-user"
-
-    extra_arguments = [
-      "--extra-vars",
-      "db_password=${var.db_password} environment=${var.environment}"
-    ]
   }
 }
