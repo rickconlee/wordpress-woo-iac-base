@@ -1,0 +1,25 @@
+
+
+####################################
+# AWS Credentials
+####################################
+# These are used by the AWS provider
+# Recommended: use a dedicated IAM user or role
+# with least privilege
+
+aws_access_key_id     = ""
+aws_secret_access_key = ""
+
+####################################
+# Cloudflare Credentials
+####################################
+# API Token (NOT global API key)
+# Permissions required:
+# - Zone:DNS:Edit
+# - Zone:Zone:Read
+
+cloudflare_api_token = ""
+
+# Cloudflare Zone ID for your domain
+# Found in the Cloudflare dashboard → Overview
+cloudflare_zone_id = ""
