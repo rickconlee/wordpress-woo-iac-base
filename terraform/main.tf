@@ -45,7 +45,6 @@ resource "aws_route_table_association" "b" {
 # Security Groups
 ##################
 
-# Web (EC2)
 resource "aws_security_group" "web" {
   name   = "web"
   vpc_id = aws_vpc.demo.id
@@ -55,6 +54,14 @@ resource "aws_security_group" "web" {
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = local.cloudflare_ipv4
+  }
+
+  ingress {
+    from_port   = 8443
+    to_port     = 8443
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.demo.cidr_block]
+    description = "NLB health check port"
   }
 
   egress {
@@ -70,9 +77,31 @@ resource "aws_security_group" "web" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
 }
 
-# EFS
+
 resource "aws_security_group" "efs" {
   name   = "efs"
   vpc_id = aws_vpc.demo.id
@@ -83,11 +112,10 @@ resource "aws_security_group_rule" "efs_from_web" {
   from_port                = 2049
   to_port                  = 2049
   protocol                 = "tcp"
-  security_group_id         = aws_security_group.efs.id
-  source_security_group_id  = aws_security_group.web.id
+  security_group_id        = aws_security_group.efs.id
+  source_security_group_id = aws_security_group.web.id
 }
 
-# RDS
 resource "aws_security_group" "db" {
   name   = "db"
   vpc_id = aws_vpc.demo.id
@@ -98,8 +126,8 @@ resource "aws_security_group_rule" "db_from_web" {
   from_port                = 3306
   to_port                  = 3306
   protocol                 = "tcp"
-  security_group_id         = aws_security_group.db.id
-  source_security_group_id  = aws_security_group.web.id
+  security_group_id        = aws_security_group.db.id
+  source_security_group_id = aws_security_group.web.id
 }
 
 ##################
@@ -164,6 +192,7 @@ resource "aws_lb_target_group" "tg" {
   vpc_id   = aws_vpc.demo.id
 
   health_check {
+    port = "8443"
     protocol = "TCP"
   }
 }
@@ -180,18 +209,120 @@ resource "aws_lb_listener" "listener" {
 }
 
 ##################
+# WordPress Secrets
+##################
+
+resource "random_password" "auth_key" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "secure_auth_key" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "logged_in_key" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "nonce_key" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "auth_salt" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "secure_auth_salt" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "logged_in_salt" {
+  length  = 64
+  special = true
+}
+
+resource "random_password" "nonce_salt" {
+  length  = 64
+  special = true
+}
+
+##################
 # EC2 / ASG
 ##################
 
 resource "aws_launch_template" "wp" {
-  image_id      = "ami-05bf1d46393e681cc"
+  image_id      = "ami-07a42b38cb5c1a055"
   instance_type = "t2.micro"
 
   network_interfaces {
     associate_public_ip_address = true
     security_groups             = [aws_security_group.web.id]
   }
+
+  user_data = base64encode(<<EOF
+  #!/bin/bash
+  set -e
+  
+  WP_CONFIG="/var/www/html/wp-config.php"
+  
+  # If it already exists, don't touch it.
+  if [ -f "$WP_CONFIG" ]; then
+    exit 0
+  fi
+  
+  cat > "$WP_CONFIG" <<'EOC'
+  <?php
+  define('DB_NAME', '${aws_db_instance.mysql.db_name}');
+  define('DB_USER', '${aws_db_instance.mysql.username}');
+  define('DB_PASSWORD', '${aws_db_instance.mysql.password}');
+  define('DB_HOST', '${aws_db_instance.mysql.address}');
+  define('DB_CHARSET', 'utf8mb4');
+  define('DB_COLLATE', '');
+  
+  define('AUTH_KEY',         '${random_password.auth_key.result}');
+  define('SECURE_AUTH_KEY',  '${random_password.secure_auth_key.result}');
+  define('LOGGED_IN_KEY',    '${random_password.logged_in_key.result}');
+  define('NONCE_KEY',        '${random_password.nonce_key.result}');
+  define('AUTH_SALT',        '${random_password.auth_salt.result}');
+  define('SECURE_AUTH_SALT', '${random_password.secure_auth_salt.result}');
+  define('LOGGED_IN_SALT',   '${random_password.logged_in_salt.result}');
+  define('NONCE_SALT',       '${random_password.nonce_salt.result}');
+  
+  $table_prefix = 'wp_';
+  define('WP_DEBUG', false);
+  define('FS_METHOD', 'direct');
+  
+  # Cloudflare / reverse-proxy HTTPS sanity
+  if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+    $_SERVER['HTTPS'] = 'on';
+  }
+  if (isset($_SERVER['HTTP_CF_VISITOR']) && strpos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false) {
+    $_SERVER['HTTPS'] = 'on';
+  }
+  define('FORCE_SSL_ADMIN', true);
+  
+  if (!defined('ABSPATH')) {
+    define('ABSPATH', __DIR__ . '/');
+  }
+  
+  require_once ABSPATH . 'wp-settings.php';
+  EOC
+  
+  # Demo-unblocker permissions (readable by php-fpm even if it's running as apache)
+  chown root:root "$WP_CONFIG"
+  chmod 0644 "$WP_CONFIG"
+  EOF
+  )
+
 }
+
+
 
 resource "aws_autoscaling_group" "wp" {
   desired_capacity = 2

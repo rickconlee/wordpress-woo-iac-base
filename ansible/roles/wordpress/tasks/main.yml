@@ -1,11 +1,25 @@
-- name: Install packages
+###################################
+# System packages (Amazon Linux 2023 safe)
+###################################
+
+- name: Install system packages
   dnf:
     name:
       - nginx
       - php
+      - php-fpm
       - php-mysqlnd
+      - php-gd
+      - php-xml
+      - php-mbstring
+      - php-json
+      - tar
       - amazon-efs-utils
     state: present
+
+###################################
+# SSL directories
+###################################
 
 - name: Ensure /etc/ssl/private exists
   file:
@@ -15,6 +29,10 @@
     group: root
     mode: "0700"
 
+###################################
+# Web root
+###################################
+
 - name: Create web root
   file:
     path: /var/www/html
@@ -22,6 +40,35 @@
     owner: nginx
     group: nginx
     mode: "0755"
+
+###################################
+# WordPress core (baked into AMI)
+###################################
+
+- name: Download WordPress core
+  get_url:
+    url: https://wordpress.org/latest.tar.gz
+    dest: /tmp/wordpress.tar.gz
+    mode: "0644"
+
+- name: Extract WordPress core
+  unarchive:
+    src: /tmp/wordpress.tar.gz
+    dest: /var/www/html
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    owner: nginx
+    group: nginx
+
+###################################
+# wp-content (EFS mount point only)
+###################################
+
+- name: Remove wp-content directory (will be replaced by EFS)
+  file:
+    path: /var/www/html/wp-content
+    state: absent
 
 - name: Create wp-content mount point
   file:
@@ -31,24 +78,78 @@
     group: nginx
     mode: "0755"
 
+###################################
+# Cloudflare origin certificates
+###################################
+
 - name: Copy Cloudflare cert
   copy:
     src: cloudflare-origin.crt
     dest: /etc/ssl/certs/origin.crt
+    owner: root
+    group: root
     mode: "0644"
 
 - name: Copy Cloudflare key
   copy:
     src: cloudflare-origin.key
     dest: /etc/ssl/private/origin.key
+    owner: root
+    group: root
     mode: "0600"
 
-- name: Nginx config
+###################################
+# PHP-FPM
+###################################
+
+- name: Enable and start php-fpm
+  service:
+    name: php-fpm
+    enabled: true
+    state: started
+
+- name: Configure php-fpm pool user/group to nginx
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: '^{{ item.key }}\s*='
+    line: '{{ item.key }} = {{ item.value }}'
+  loop:
+    - { key: 'user', value: 'nginx' }
+    - { key: 'group', value: 'nginx' }
+    - { key: 'listen.owner', value: 'nginx' }
+    - { key: 'listen.group', value: 'nginx' }
+
+- name: Restart php-fpm
+  service:
+    name: php-fpm
+    state: restarted
+
+
+###################################
+# Nginx
+###################################
+
+- name: Install nginx config
   template:
     src: nginx.conf.j2
     dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
 
-- name: Enable nginx
+- name: Validate nginx config
+  command: nginx -t
+  register: nginx_test
+
+- name: Show nginx -t stdout
+  debug:
+    var: nginx_test.stdout
+
+- name: Show nginx -t stderr
+  debug:
+    var: nginx_test.stderr
+
+- name: Enable and start nginx
   service:
     name: nginx
     enabled: true
