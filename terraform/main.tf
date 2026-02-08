@@ -173,9 +173,9 @@ resource "aws_db_instance" "mysql" {
   vpc_security_group_ids = [aws_security_group.db.id]
 }
 
-##################
+#########################
 # Network Load Balancer
-##################
+#########################
 
 resource "aws_lb" "nlb" {
   name               = "lolzify-nlb"
@@ -208,9 +208,9 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
-##################
+######################
 # WordPress Secrets
-##################
+######################
 
 resource "random_password" "auth_key" {
   length  = 64
