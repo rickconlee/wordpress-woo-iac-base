@@ -4,6 +4,7 @@
 # .tfstate files
 *.tfstate
 *.tfstate.*
+.terraform.lock.hcl
 
 # Crash log files
 crash.log
@@ -39,3 +40,8 @@ terraform.rc
 # Certificates. For goodness sake, we can't have these in version control!
 *.crt
 *.key
+
+# Ignore Backups
+
+backups/*
+backups/

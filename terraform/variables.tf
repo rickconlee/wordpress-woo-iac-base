@@ -12,9 +12,9 @@ variable "aws_secret_access_key" {
 }
 
 
-##########################
+#############################
 # Variables for cloudflare
-##########################
+#############################
 
 variable "cloudflare_zone_id" {
   type = string
