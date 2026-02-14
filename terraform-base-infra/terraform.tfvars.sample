@@ -1,25 +1,26 @@
-
-
 ####################################
-# AWS Credentials
+# Credentials for AWS and Cloudflare
 ####################################
-# These are used by the AWS provider
-# Recommended: use a dedicated IAM user or role
-# with least privilege
 
+# AWS Credentials for the Terraform AWS Provider
 aws_access_key_id     = ""
 aws_secret_access_key = ""
 
-####################################
 # Cloudflare Credentials
-####################################
-# API Token (NOT global API key)
-# Permissions required:
-# - Zone:DNS:Edit
-# - Zone:Zone:Read
-
 cloudflare_api_token = ""
-
-# Cloudflare Zone ID for your domain
-# Found in the Cloudflare dashboard → Overview
 cloudflare_zone_id = ""
+
+
+####################################
+# Configuration Variables
+####################################
+
+# AWS Config Vatiables 
+ami_image_id = "" # This is the AMI image that we build with Packer Example: "ami-08b9f63aca7db8e84"
+admin_ip     = "" # This is the public IP from which you are going to access the bastion host from (example: 12.127.17.71/32)
+ssh_key_name = "" # Name of the SSH key pair you have in AWS (example: "aws-cuny-demo")
+
+# Wordpress config variables 
+mysql_user_name     = "wp_user"
+mysql_user_password = "wp_user_password"    
+mysql_database_name = "wordpress_db"

@@ -2,7 +2,7 @@
 # System packages (Amazon Linux 2023 safe)
 ###################################
 
-- name: Install system packages
+- name: Install system and core packages
   dnf:
     name:
       - nginx
@@ -15,6 +15,7 @@
       - php-json
       - tar
       - amazon-efs-utils
+      - mariadb1011-client-utils.x86_64
     state: present
 
 ###################################
