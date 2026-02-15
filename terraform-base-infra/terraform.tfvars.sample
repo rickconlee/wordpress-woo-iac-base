@@ -1,0 +1,26 @@
+####################################
+# Credentials for AWS and Cloudflare
+####################################
+
+# AWS Credentials for the Terraform AWS Provider
+aws_access_key_id     = ""
+aws_secret_access_key = ""
+
+# Cloudflare Credentials
+cloudflare_api_token = ""
+cloudflare_zone_id = ""
+
+
+####################################
+# Configuration Variables
+####################################
+
+# AWS Config Vatiables 
+ami_image_id = "" # This is the AMI image that we build with Packer Example: "ami-08b9f63aca7db8e84"
+admin_ip     = "" # This is the public IP from which you are going to access the bastion host from (example: 12.127.17.71/32)
+ssh_key_name = "" # Name of the SSH key pair you have in AWS (example: "aws-cuny-demo")
+
+# Wordpress config variables 
+mysql_user_name     = "wp_user"
+mysql_user_password = "wp_user_password"    
+mysql_database_name = "wordpress_db"

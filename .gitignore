@@ -40,6 +40,7 @@ terraform.rc
 # Certificates. For goodness sake, we can't have these in version control!
 *.crt
 *.key
+*.pem
 
 # Ignore Backups
 
