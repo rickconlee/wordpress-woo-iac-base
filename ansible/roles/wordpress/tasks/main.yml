@@ -16,6 +16,7 @@
       - tar
       - amazon-efs-utils
       - mariadb1011-client-utils.x86_64
+      - unzip
     state: present
 
 ###################################

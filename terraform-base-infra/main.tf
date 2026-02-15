@@ -9,19 +9,20 @@ resource "aws_vpc" "demo" {
   enable_dns_hostnames = true
 }
 
-# Subnets split across 2 availability zones 
+# Subnets split across 2 availability zones
 resource "aws_subnet" "a" {
   vpc_id            = aws_vpc.demo.id
   cidr_block        = "10.0.1.0/24"
   availability_zone = "us-east-2a"
+  map_public_ip_on_launch = true
 }
 
 resource "aws_subnet" "b" {
   vpc_id            = aws_vpc.demo.id
   cidr_block        = "10.0.2.0/24"
   availability_zone = "us-east-2b"
+  map_public_ip_on_launch = true
 }
-
 
 # Internet Gateway and Route Table for the above subnets
 resource "aws_internet_gateway" "igw" {
@@ -47,7 +48,6 @@ resource "aws_route_table_association" "b" {
   route_table_id = aws_route_table.public.id
 }
 
-
 ##################
 # Security Groups
 ##################
@@ -72,19 +72,26 @@ resource "aws_security_group" "web" {
     description = "NLB health check port"
   }
 
-# TODO: Fix all these egresses so they stay in the VPC (NFS, MYSQL, HTTPS, DNS)
+  # Best-practice egress:
+  # - NFS only to EFS SG
+  # - MySQL only to DB SG
+  # - DNS only to the VPC resolver (10.0.0.2)
+  # - HTTPS allowed out for OS repos, etc.
+
   egress {
-    from_port   = 2049
-    to_port     = 2049
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.efs.id]
+    description     = "NFS to EFS only"
   }
 
   egress {
-    from_port   = 3306
-    to_port     = 3306
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.db.id]
+    description     = "MySQL to RDS only"
   }
 
   egress {
@@ -92,20 +99,23 @@ resource "aws_security_group" "web" {
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS egress for repos/helpers"
   }
 
   egress {
     from_port   = 53
     to_port     = 53
     protocol    = "udp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.2/32"]
+    description = "DNS (UDP) to VPC resolver only"
   }
 
   egress {
     from_port   = 53
     to_port     = 53
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.2/32"]
+    description = "DNS (TCP) to VPC resolver only"
   }
 }
 
@@ -219,8 +229,6 @@ resource "aws_lb_listener" "listener" {
 # WordPress Secrets
 ######################
 
-# The following items randomly generate those secrets and hashes that go in the wp-config.php file. 
-
 resource "random_password" "auth_key" {
   length  = 64
   special = true
@@ -307,6 +315,27 @@ write_files:
       mkdir -p "$${EFS_MOUNT}"
       mkdir -p "$${LOCAL_WP_CONTENT}"
 
+      EFS_FQDN="$${EFS_FS_ID}.efs.us-east-2.amazonaws.com"
+
+      echo "--- resolv.conf ---"
+      cat /etc/resolv.conf || true
+
+      echo "--- wait for DNS to be ready (up to 120s) ---"
+      dns_attempt=1
+      dns_max_attempts=60
+      while [ "$${dns_attempt}" -le "$${dns_max_attempts}" ]; do
+        if getent hosts "$${EFS_FQDN}" >/dev/null 2>&1; then
+          echo "DNS OK for $${EFS_FQDN}"
+          break
+        fi
+        echo "DNS not ready yet ($${dns_attempt}/$${dns_max_attempts})"
+        sleep 2
+        dns_attempt=$((dns_attempt + 1))
+      done
+
+      echo "--- trying DNS for EFS (final) ---"
+      getent hosts "$${EFS_FQDN}" || true
+
       EFS_FSTAB_LINE="$${EFS_FS_ID}:/ $${EFS_MOUNT} efs tls,_netdev,x-systemd.automount,nofail 0 0"
       if ! grep -Fq "$${EFS_FSTAB_LINE}" /etc/fstab; then
         echo "$${EFS_FSTAB_LINE}" >> /etc/fstab
@@ -316,12 +345,6 @@ write_files:
       if ! grep -Fq "$${BIND_FSTAB_LINE}" /etc/fstab; then
         echo "$${BIND_FSTAB_LINE}" >> /etc/fstab
       fi
-
-      echo "--- resolv.conf ---"
-      cat /etc/resolv.conf || true
-
-      echo "--- trying DNS for EFS ---"
-      getent hosts "$${EFS_FS_ID}.efs.us-east-2.amazonaws.com" || true
 
       echo "Mounting (mount -a) with retry..."
       attempt=1
@@ -346,31 +369,25 @@ write_files:
       echo "--- df -h | grep efs ---"
       df -h | grep -E "efs|$${EFS_MOUNT}" || true
 
+      # Hard requirement: EFS must mount
       if ! mountpoint -q "$${EFS_MOUNT}"; then
         echo "FATAL: EFS did not mount at $${EFS_MOUNT}"
         exit 1
       fi
 
-      echo "Validating EFS wp-content structure..."
-      if [ ! -d "$${EFS_WP_CONTENT}" ]; then
-        echo "FATAL: Missing $${EFS_WP_CONTENT}"
-        echo "--- ls -la $${EFS_MOUNT} ---"
-        ls -la "$${EFS_MOUNT}" || true
-        exit 1
-      fi
+      # Ensure wp-content exists on EFS (empty is fine until restore)
+      echo "Ensuring EFS wp-content directory exists (mkdir -p)..."
+      mkdir -p "$${EFS_WP_CONTENT}"
 
-      echo "Trigger bind automount by touching wp-content..."
+      echo "Trigger bind automount by listing wp-content..."
       ls -la "$${LOCAL_WP_CONTENT}" || true
 
       echo "--- mount | grep wp-content ---"
       mount | grep -E "$${LOCAL_WP_CONTENT}|$${EFS_WP_CONTENT}" || true
 
-      if [ ! -d "$${LOCAL_WP_CONTENT}/themes" ] || [ ! -d "$${LOCAL_WP_CONTENT}/plugins" ] || [ ! -d "$${LOCAL_WP_CONTENT}/uploads" ]; then
-        echo "FATAL: wp-content does not look mounted (themes/plugins/uploads missing)"
-        echo "--- ls -la $${LOCAL_WP_CONTENT} ---"
-        ls -la "$${LOCAL_WP_CONTENT}" || true
-        exit 1
-      fi
+      echo "--- NOTE: wp-content may be empty until restore. This is OK. ---"
+      echo "--- ls -la $${LOCAL_WP_CONTENT} ---"
+      ls -la "$${LOCAL_WP_CONTENT}" || true
 
       echo "Ensuring wp-config.php exists (idempotent)..."
       WP_CONFIG="$${LOCAL_WP_ROOT}/wp-config.php"
