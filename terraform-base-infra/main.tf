@@ -11,16 +11,16 @@ resource "aws_vpc" "demo" {
 
 # Subnets split across 2 availability zones
 resource "aws_subnet" "a" {
-  vpc_id            = aws_vpc.demo.id
-  cidr_block        = "10.0.1.0/24"
-  availability_zone = "us-east-2a"
+  vpc_id                  = aws_vpc.demo.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-east-2a"
   map_public_ip_on_launch = true
 }
 
 resource "aws_subnet" "b" {
-  vpc_id            = aws_vpc.demo.id
-  cidr_block        = "10.0.2.0/24"
-  availability_zone = "us-east-2b"
+  vpc_id                  = aws_vpc.demo.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "us-east-2b"
   map_public_ip_on_launch = true
 }
 
@@ -299,13 +299,18 @@ write_files:
       date -Is
 
       EFS_FS_ID="${aws_efs_file_system.wp.id}"
+      AWS_REGION="us-east-2"
 
       EFS_MOUNT="/mnt/efs"
       LOCAL_WP_ROOT="/var/www/html"
       LOCAL_WP_CONTENT="$${LOCAL_WP_ROOT}/wp-content"
       EFS_WP_CONTENT="$${EFS_MOUNT}/wp-content"
 
+      EFS_FQDN="$${EFS_FS_ID}.efs.$${AWS_REGION}.amazonaws.com"
+
       echo "EFS_FS_ID=$${EFS_FS_ID}"
+      echo "AWS_REGION=$${AWS_REGION}"
+      echo "EFS_FQDN=$${EFS_FQDN}"
       echo "EFS_MOUNT=$${EFS_MOUNT}"
       echo "EFS_WP_CONTENT=$${EFS_WP_CONTENT}"
       echo "LOCAL_WP_CONTENT=$${LOCAL_WP_CONTENT}"
@@ -314,8 +319,6 @@ write_files:
 
       mkdir -p "$${EFS_MOUNT}"
       mkdir -p "$${LOCAL_WP_CONTENT}"
-
-      EFS_FQDN="$${EFS_FS_ID}.efs.us-east-2.amazonaws.com"
 
       echo "--- resolv.conf ---"
       cat /etc/resolv.conf || true
@@ -336,23 +339,16 @@ write_files:
       echo "--- trying DNS for EFS (final) ---"
       getent hosts "$${EFS_FQDN}" || true
 
-      EFS_FSTAB_LINE="$${EFS_FS_ID}:/ $${EFS_MOUNT} efs tls,_netdev,x-systemd.automount,nofail 0 0"
-      if ! grep -Fq "$${EFS_FSTAB_LINE}" /etc/fstab; then
-        echo "$${EFS_FSTAB_LINE}" >> /etc/fstab
-      fi
-
-      BIND_FSTAB_LINE="$${EFS_WP_CONTENT} $${LOCAL_WP_CONTENT} none bind,_netdev,x-systemd.automount,nofail 0 0"
-      if ! grep -Fq "$${BIND_FSTAB_LINE}" /etc/fstab; then
-        echo "$${BIND_FSTAB_LINE}" >> /etc/fstab
-      fi
-
-      echo "Mounting (mount -a) with retry..."
+      echo "--- mount EFS explicitly (retry) ---"
       attempt=1
       max_attempts=60
-      sleep_seconds=2
-
       while [ "$${attempt}" -le "$${max_attempts}" ]; do
-        mount -a || true
+        if mountpoint -q "$${EFS_MOUNT}"; then
+          echo "EFS already mounted at $${EFS_MOUNT}"
+          break
+        fi
+
+        mount -t efs -o tls,_netdev "$${EFS_FS_ID}":/ "$${EFS_MOUNT}" || true
 
         if mountpoint -q "$${EFS_MOUNT}"; then
           echo "EFS mounted at $${EFS_MOUNT}"
@@ -360,7 +356,7 @@ write_files:
         fi
 
         echo "Attempt $${attempt}/$${max_attempts}: EFS not mounted yet"
-        sleep "$${sleep_seconds}"
+        sleep 2
         attempt=$((attempt + 1))
       done
 
@@ -369,18 +365,41 @@ write_files:
       echo "--- df -h | grep efs ---"
       df -h | grep -E "efs|$${EFS_MOUNT}" || true
 
-      # Hard requirement: EFS must mount
       if ! mountpoint -q "$${EFS_MOUNT}"; then
         echo "FATAL: EFS did not mount at $${EFS_MOUNT}"
         exit 1
       fi
 
-      # Ensure wp-content exists on EFS (empty is fine until restore)
-      echo "Ensuring EFS wp-content directory exists (mkdir -p)..."
+      echo "Ensuring EFS wp-content directory exists BEFORE bind mount (mkdir -p)..."
       mkdir -p "$${EFS_WP_CONTENT}"
 
-      echo "Trigger bind automount by listing wp-content..."
-      ls -la "$${LOCAL_WP_CONTENT}" || true
+      echo "--- bind mount wp-content explicitly (retry) ---"
+      attempt=1
+      max_attempts=60
+      while [ "$${attempt}" -le "$${max_attempts}" ]; do
+        if mountpoint -q "$${LOCAL_WP_CONTENT}"; then
+          echo "wp-content already mounted at $${LOCAL_WP_CONTENT}"
+          break
+        fi
+
+        mount --bind "$${EFS_WP_CONTENT}" "$${LOCAL_WP_CONTENT}" || true
+
+        if mountpoint -q "$${LOCAL_WP_CONTENT}"; then
+          echo "Bind mount OK: $${EFS_WP_CONTENT} -> $${LOCAL_WP_CONTENT}"
+          break
+        fi
+
+        echo "Attempt $${attempt}/$${max_attempts}: bind mount not active yet"
+        sleep 2
+        attempt=$((attempt + 1))
+      done
+
+      if ! mountpoint -q "$${LOCAL_WP_CONTENT}"; then
+        echo "FATAL: bind mount did not activate for $${LOCAL_WP_CONTENT}"
+        echo "--- mount output ---"
+        mount | grep -E "$${EFS_MOUNT}|$${LOCAL_WP_CONTENT}" || true
+        exit 1
+      fi
 
       echo "--- mount | grep wp-content ---"
       mount | grep -E "$${LOCAL_WP_CONTENT}|$${EFS_WP_CONTENT}" || true
@@ -388,6 +407,9 @@ write_files:
       echo "--- NOTE: wp-content may be empty until restore. This is OK. ---"
       echo "--- ls -la $${LOCAL_WP_CONTENT} ---"
       ls -la "$${LOCAL_WP_CONTENT}" || true
+
+      echo "--- ownership sanity (optional but recommended) ---"
+      chown -R nginx:nginx "$${LOCAL_WP_CONTENT}" || true
 
       echo "Ensuring wp-config.php exists (idempotent)..."
       WP_CONFIG="$${LOCAL_WP_ROOT}/wp-config.php"
@@ -439,6 +461,7 @@ runcmd:
   - [ bash, -lc, "/usr/local/bin/mount-efs-wp-content.sh" ]
 EOF
   )
+  depends_on = [aws_efs_file_system.wp, aws_efs_mount_target.a, aws_efs_mount_target.b]
 }
 
 resource "aws_autoscaling_group" "wp" {
@@ -470,6 +493,7 @@ resource "aws_autoscaling_group" "wp" {
 resource "aws_autoscaling_attachment" "asg" {
   autoscaling_group_name = aws_autoscaling_group.wp.name
   lb_target_group_arn    = aws_lb_target_group.tg.arn
+  depends_on             = [aws_efs_file_system.wp, aws_efs_mount_target.a, aws_efs_mount_target.b]
 }
 
 ##########################
@@ -515,6 +539,8 @@ module "migration_bastion" {
     Project = "lolzify"
     Purpose = "migration"
   }
+
+  depends_on = [aws_db_instance.mysql, aws_efs_file_system.wp]
 
   enable = true
 }
